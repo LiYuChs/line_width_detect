@@ -1,0 +1,6 @@
+# 忽略結果影像與模型權重
+pretrained_weights/
+data/
+Report/
+.vscode/
+__pycache__/
