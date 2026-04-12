@@ -68,7 +68,7 @@ class FWHMProcessor:
         lines = cv2.HoughLinesP(
             edges, 
             rho=1, 
-            theta=np.pi/180, 
+            theta=np.pi/1800, 
             threshold=100, 
             minLineLength=80, 
             maxLineGap=25
@@ -307,7 +307,7 @@ if __name__ == "__main__":
     image_path = Path(default_image)
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path.cwd() / "data" / "fhwm_hough_result" / timestamp
+    output_dir = Path.cwd() / "data" / "fwhm_hough_result" / timestamp
     check_path_exists(output_dir)
 
     print("Running processor...")

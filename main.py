@@ -2,7 +2,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
-from fhwm_main import FWHMProcessor
+from fwhm_main import FWHMProcessor
 from optimized_sam_main import OptimizedSAMProcessor
 from SAM_main import SAMProcessor
 from sr_sam_main import SRSAMProcessor
