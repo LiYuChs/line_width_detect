@@ -1,24 +1,69 @@
+import os
 import cv2
+import random
 import numpy as np
 from pathlib import Path
 from datetime import datetime
-import os
-import sys
+import matplotlib.pyplot as plt
 
+import sys
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent_dir)
 from fwhm_main import FWHMProcessor
+from super_resolution.realesrgan import SuperResolutionUpscaler
+from super_resolution.aurasr import AuraSRWrapper
 
 from utils import check_path_exists, imwrite_check
 
-def verify_hough_rotation(image_path, output_dir, rotate_deg=25.0):
+def verify_hough_rotation(image_path, output_dir, rotate_deg=25.0, random_augmentation=False, use_super_resolution=False, sr_upscaler=None):
     print(f"--- 啟動旋轉驗證測試 (人為旋轉角度: {rotate_deg} 度) ---")
 
     # 1. 讀取原圖與初始化
     img_gray = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
     if img_gray is None:
         raise FileNotFoundError(f"找不到測試影像: {image_path}")
-        
+    
+
+    # 新增隨機條件模擬影像情況
+    if random_augmentation:
+        effects = []
+        if random.random() > 0.5:
+            effects.append("noise")
+        if random.random() > 0.5:
+            effects.append("blur")
+        if random.random() > 0.5:
+            effects.append("illumination")
+
+        if not effects:
+            effects.append(random.choice(["noise", "blur", "illumination"]))
+            # print(f"隨機增強效果: {effects}")
+
+        if "noise" in effects:
+            # Gaussian noise (mean=0, sigma=25)
+            mean=0
+            sigma=25
+            gauss = np.random.normal(mean, sigma, img_gray.shape).astype(np.float32)
+            img_gray = cv2.add(img_gray.astype(np.float32), gauss).clip(0, 255).astype(np.uint8)
+
+        if "blur" in effects:
+            img_gray = cv2.GaussianBlur(img_gray, (3, 3), 0)
+
+        if "illumination" in effects:
+            if random.random() > 0.5:
+                # 增加亮度
+                alpha, beta = 1.2, 50
+            else:
+                # 減少亮度
+                alpha, beta = 0.5, 64
+            img_gray = cv2.convertScaleAbs(img_gray, alpha=alpha, beta=beta)
+
+        aug_output_path = output_dir / "augmented"
+        check_path_exists(aug_output_path)
+        aug_output_path = aug_output_path / f"augmented_{rotate_deg}.jpg"
+        imwrite_check(str(aug_output_path), img_gray)
+
+    
+    
     processor = FWHMProcessor()
     h, w = img_gray.shape
     mid_x = w // 2
@@ -26,7 +71,7 @@ def verify_hough_rotation(image_path, output_dir, rotate_deg=25.0):
     # 2. 計算原始角度
     orig_data = processor._calculate_tilt_angle(img_gray, mid_x)
     orig_angle = np.degrees(orig_data["median_angle_rad"])
-    print(f"[原始影像] 偵測傾角: {orig_angle:.3f} 度")
+    # print(f"[原始影像] 偵測傾角: {orig_angle:.3f} 度")
 
     # 3. 執行影像旋轉 (使用 cv2.warpAffine)
     # OpenCV 的 getRotationMatrix2D 中，正角度代表「逆時針旋轉」
@@ -47,20 +92,35 @@ def verify_hough_rotation(image_path, output_dir, rotate_deg=25.0):
     rotated_gray = cv2.warpAffine(img_gray, M, (new_w, new_h), borderValue=255)
     new_mid_x = new_w // 2
 
+    
+    ##############################################################################################
+
+    if use_super_resolution:
+        if sr_upscaler is None:
+            sr_upscaler = SuperResolutionUpscaler()
+        rotated_gray = sr_upscaler.enhance_gray(rotated_gray)
+        sr_output_path = output_dir / "sr_enhanced"
+        check_path_exists(sr_output_path)
+        sr_output_path = sr_output_path / f"sr_enhanced_{rotate_deg}.jpg"
+        imwrite_check(str(sr_output_path), rotated_gray)
+
     # 4. 計算旋轉後的角度
     rot_data = processor._calculate_tilt_angle(rotated_gray, new_mid_x)
     rot_angle = 0.0 - np.degrees(rot_data["median_angle_rad"])
-    print(f"[旋轉影像] 偵測傾角: {rot_angle:.3f} 度")
+    # print(f"[旋轉影像] 偵測傾角: {rot_angle:.3f} 度")
+
+    
+    ##############################################################################################
 
     # 5. 驗證差異
     # 因為原圖可能有微小初始傾角，實際測量到的總變化量應為兩者相減的絕對值
     angle_diff = abs(rot_angle + orig_angle)
     error = abs(angle_diff - rotate_deg)
     
-    print("-" * 50)
-    print(f"實際測量轉動差值: {angle_diff:.3f} 度")
-    print(f"與目標 ({rotate_deg}度) 誤差: {error:.3f} 度")
-    print("-" * 50)
+    # print("-" * 50)
+    # print(f"實際測量轉動差值: {angle_diff:.3f} 度")
+    # print(f"與目標 ({rotate_deg}度) 誤差: {error:.3f} 度")
+    # print("-" * 50)
 
     # --- 6. 視覺化旋轉角度 (旋轉邊框與角度扇形) ---
     # 將灰階圖轉為彩色以繪製彩色標記
@@ -113,7 +173,9 @@ def verify_hough_rotation(image_path, output_dir, rotate_deg=25.0):
     cv2.putText(viz_img, f"{rotate_deg} deg", (int(text_x), int(text_y)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
 
     # 輸出視覺化圖檔供確認
-    output_path = output_dir / f"rotated_{rotate_deg}.jpg"
+    output_path = output_dir / "rotation"
+    check_path_exists(output_path)
+    output_path = output_path / f"rotation_viz_{rotate_deg}.jpg"
     imwrite_check(str(output_path), viz_img)
 
     return {
@@ -123,6 +185,20 @@ def verify_hough_rotation(image_path, output_dir, rotate_deg=25.0):
         "error": error
     }
 
+def plot_rotation_error(error_records, output_dir):
+    plt.figure(figsize=(10, 6))
+    plt.plot(error_records, marker='o')
+    plt.title("Rotation Angle Error vs. Target Angle")
+    plt.xlabel("Target Rotation (degrees)")
+    plt.ylabel("Error (degrees)")
+    plt.xticks(range(0, 91, 10))
+    plt.grid()
+    plt.savefig(output_dir / "rotation_error_plot.png")
+    plt.close()
+
+def txt_writer(file_path, content):
+    with open(file_path, "w") as f:
+        f.write(content)
 
 if __name__ == "__main__":
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -132,14 +208,33 @@ if __name__ == "__main__":
     check_path_exists(output_dir)
     
 
-    # verify_hough_rotation(test_image, output_dir, rotate_deg=89)
+    # verify_hough_rotation(test_image, output_dir, rotate_deg=45.0, random_augmentation=True)
     
+    # Low-VRAM mode: tile-based inference and half precision reduce peak GPU memory.
+    # sr_upscaler = SuperResolutionUpscaler(tile=200, tile_pad=10, half=True)
+    sr_upscaler = AuraSRWrapper()
+
     error_records = []
     for rotate_deg in range(0, 91):
-        result = verify_hough_rotation(test_image, output_dir, rotate_deg=rotate_deg)
+        result = verify_hough_rotation(
+            test_image,
+            output_dir,
+            rotate_deg=rotate_deg,
+            random_augmentation=False,
+            use_super_resolution=True,
+            sr_upscaler=sr_upscaler,
+        )
         error_records.append(result["error"])
-    
-    print(f"--- 旋轉角度誤差統計 ---")
-    print(f"最大誤差: {max(error_records):.3f} 度")
-    print(f"最小誤差: {min(error_records):.3f} 度")
-    print(f"平均誤差: {sum(error_records)/len(error_records):.3f} 度")
+        # AuraSRWrapper.release_model(sr_upscaler)
+
+    AuraSRWrapper.release_model(sr_upscaler)
+
+    plot_rotation_error(error_records, output_dir)
+
+    # 輸出統計結果到文字檔
+    stats_content = f"--- 旋轉角度誤差統計 ---\n"
+    stats_content += f"最大誤差： {max(error_records):.3f} 度\n"
+    stats_content += f"最小誤差： {min(error_records):.3f} 度\n"
+    stats_content += f"平均誤差： {sum(error_records)/len(error_records):.3f} 度\n"
+
+    txt_writer(output_dir / "rotation_stats.txt", stats_content)

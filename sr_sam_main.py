@@ -4,16 +4,15 @@ import cv2
 import numpy as np
 import pandas as pd
 import torch
-from basicsr.archs.rrdbnet_arch import RRDBNet
-from realesrgan import RealESRGANer
 from segment_anything import SamPredictor, sam_model_registry
+from super_resolution.realesrgan import DEFAULT_REALESRGAN_CHECKPOINT_PATH, DEFAULT_UPSCALE_FACTOR, SuperResolutionUpscaler
 from utils import check_path_exists, imwrite_check
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 SAM_CHECKPOINT_PATH = "./pretrained_weights/sam_vit_b_01ec64.pth"
 SAM_MODEL_TYPE = "vit_b"
-RE_ESRGAN_CHECKPOINT_PATH = "./pretrained_weights/RealESRGAN_x4plus.pth"
-SR_UPSCALE_FACTOR = 4
+RE_ESRGAN_CHECKPOINT_PATH = DEFAULT_REALESRGAN_CHECKPOINT_PATH
+SR_UPSCALE_FACTOR = DEFAULT_UPSCALE_FACTOR
 LINE_Y_COORDINATES = [407, 418, 429, 441, 452, 463, 474, 485, 496, 507]
 CENTER_X = 350
 
@@ -37,8 +36,11 @@ class SRSAMProcessor:
         self._init_sam_model()
 
     def _init_sr_model(self):
-        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
-        self.upsampler = RealESRGANer(scale=self.upscale_factor, model_path=self.realesrgan_checkpoint_path, model=model, tile=0, device=self.device)
+        self.upsampler = SuperResolutionUpscaler(
+            checkpoint_path=self.realesrgan_checkpoint_path,
+            upscale_factor=self.upscale_factor,
+            device=self.device,
+        )
 
     def _init_sam_model(self):
         sam = sam_model_registry[self.sam_model_type](checkpoint=self.sam_checkpoint_path)
@@ -62,7 +64,7 @@ class SRSAMProcessor:
         if image is None:
             raise FileNotFoundError(f"Unable to read image: {image_path}")
 
-        upscaled_img, _ = self.upsampler.enhance(image, outscale=self.upscale_factor)
+        upscaled_img = self.upsampler.enhance(image)
         enhanced_img_bgr = self._apply_morphology_closing(upscaled_img, kernel_size=(3, 3))
         self.predictor.set_image(cv2.cvtColor(enhanced_img_bgr, cv2.COLOR_BGR2RGB))
 

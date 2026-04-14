@@ -68,7 +68,7 @@ class FWHMProcessor:
         lines = cv2.HoughLinesP(
             edges, 
             rho=1, 
-            theta=np.pi/1800, 
+            theta=np.pi/180, 
             threshold=100, 
             minLineLength=80, 
             maxLineGap=25
