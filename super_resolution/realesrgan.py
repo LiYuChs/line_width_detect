@@ -80,8 +80,8 @@ class SuperResolutionUpscaler:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    def release(self):
+    def release_model(self):
         if hasattr(self, "upsampler"):
             del self.upsampler
-        gc.collect()
-        self.clear_cuda_cache()
+            self.model = None
+            torch.cuda.empty_cache()

@@ -137,6 +137,10 @@ python tests/test_hough_rotation.py
 4. 測試現況
 - `tests/` 目前以流程驗證腳本為主，尚未建立完整 pytest 自動化測試結構。
 
+5. fai-ai api
+b43e55db-e39f-4c8b-8db4-48ba801e3ad8:b24bc9c6f22978d0c7e5c5f6a6fb568d
+
+
 ## 7. 建議下一步
 
 - 統一 Processor 介面（`run()` / `process()`）並修正 `main.py`

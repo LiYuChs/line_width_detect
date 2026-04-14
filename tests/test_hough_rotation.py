@@ -12,18 +12,11 @@ sys.path.insert(0, parent_dir)
 from fwhm_main import FWHMProcessor
 from super_resolution.realesrgan import SuperResolutionUpscaler
 from super_resolution.aurasr import AuraSRWrapper
+# from super_resolution.coz import ChainOfZoomWrapper
 
 from utils import check_path_exists, imwrite_check
 
-def verify_hough_rotation(image_path, output_dir, rotate_deg=25.0, random_augmentation=False, use_super_resolution=False, sr_upscaler=None):
-    print(f"--- 啟動旋轉驗證測試 (人為旋轉角度: {rotate_deg} 度) ---")
-
-    # 1. 讀取原圖與初始化
-    img_gray = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
-    if img_gray is None:
-        raise FileNotFoundError(f"找不到測試影像: {image_path}")
-    
-
+def get_augmentation_effects(img_gray, random_augmentation):
     # 新增隨機條件模擬影像情況
     if random_augmentation:
         effects = []
@@ -62,9 +55,9 @@ def verify_hough_rotation(image_path, output_dir, rotate_deg=25.0, random_augmen
         aug_output_path = aug_output_path / f"augmented_{rotate_deg}.jpg"
         imwrite_check(str(aug_output_path), img_gray)
 
-    
-    
-    processor = FWHMProcessor()
+    return img_gray
+
+def rotate_image(img_gray, processor):
     h, w = img_gray.shape
     mid_x = w // 2
 
@@ -92,25 +85,48 @@ def verify_hough_rotation(image_path, output_dir, rotate_deg=25.0, random_augmen
     rotated_gray = cv2.warpAffine(img_gray, M, (new_w, new_h), borderValue=255)
     new_mid_x = new_w // 2
 
+    return orig_angle, rotated_gray, new_mid_x, new_w, new_h, h, w, M
+
+def super_resolution_enhance(sr_upscaler, rotated_gray):
+    if sr_upscaler is None:
+        sr_upscaler = SuperResolutionUpscaler()
+    upscaled_gray = sr_upscaler.enhance_gray(rotated_gray)
+    sr_output_path = output_dir / "sr_enhanced"
+    check_path_exists(sr_output_path)
+    sr_output_path = sr_output_path / f"sr_enhanced_{rotate_deg}.jpg"
+    imwrite_check(str(sr_output_path), upscaled_gray)
+    return upscaled_gray       
+
+def verify_hough_rotation(image_path, output_dir, rotate_deg=25.0, random_augmentation=False, use_super_resolution=False, sr_upscaler=None, process_order=False):
+    print(f"--- 啟動旋轉驗證測試 (人為旋轉角度: {rotate_deg} 度) ---")
+
+    # 1. 讀取原圖與初始化
+    img_gray = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    if img_gray is None:
+        raise FileNotFoundError(f"找不到測試影像: {image_path}")
     
-    ##############################################################################################
+    img_gray = get_augmentation_effects(img_gray, random_augmentation)
 
-    if use_super_resolution:
-        if sr_upscaler is None:
-            sr_upscaler = SuperResolutionUpscaler()
-        rotated_gray = sr_upscaler.enhance_gray(rotated_gray)
-        sr_output_path = output_dir / "sr_enhanced"
-        check_path_exists(sr_output_path)
-        sr_output_path = sr_output_path / f"sr_enhanced_{rotate_deg}.jpg"
-        imwrite_check(str(sr_output_path), rotated_gray)
+    processor = FWHMProcessor()
 
-    # 4. 計算旋轉後的角度
-    rot_data = processor._calculate_tilt_angle(rotated_gray, new_mid_x)
+    if process_order == 0:
+        # 先旋轉再超解析
+        orig_angle, rotated_gray, new_mid_x, new_w, new_h, h, w, M = rotate_image(img_gray, processor)
+
+        if use_super_resolution:
+            upscaled_gray = super_resolution_enhance(sr_upscaler, rotated_gray)
+    else:
+        # 先超解析再旋轉
+        if use_super_resolution:
+            upscaled_gray = super_resolution_enhance(sr_upscaler, img_gray)
+
+        orig_angle, rotated_gray, new_mid_x, new_w, new_h, h, w, M = rotate_image(img_gray, processor)
+
+    rot_data = processor._calculate_tilt_angle(upscaled_gray, new_mid_x * 4) # 因為放大 4 倍，所以 mid_x 也要乘以 4
     rot_angle = 0.0 - np.degrees(rot_data["median_angle_rad"])
+
     # print(f"[旋轉影像] 偵測傾角: {rot_angle:.3f} 度")
 
-    
-    ##############################################################################################
 
     # 5. 驗證差異
     # 因為原圖可能有微小初始傾角，實際測量到的總變化量應為兩者相減的絕對值
@@ -213,21 +229,23 @@ if __name__ == "__main__":
     # Low-VRAM mode: tile-based inference and half precision reduce peak GPU memory.
     # sr_upscaler = SuperResolutionUpscaler(tile=200, tile_pad=10, half=True)
     sr_upscaler = AuraSRWrapper()
+    # sr_upscaler = ChainOfZoomWrapper(target_scale=4)
 
     error_records = []
-    for rotate_deg in range(0, 91):
+    for rotate_deg in range(0, 2):
         result = verify_hough_rotation(
             test_image,
             output_dir,
             rotate_deg=rotate_deg,
-            random_augmentation=False,
+            random_augmentation=True,
             use_super_resolution=True,
             sr_upscaler=sr_upscaler,
+            process_order=True
         )
         error_records.append(result["error"])
         # AuraSRWrapper.release_model(sr_upscaler)
 
-    AuraSRWrapper.release_model(sr_upscaler)
+    sr_upscaler.release_model()
 
     plot_rotation_error(error_records, output_dir)
 
